@@ -1,7 +1,9 @@
 import type { Recipe, RenderContext } from '../recipe';
-import { GLProgram, setSampling } from './glutil';
-import { VERT, FINAL_FRAG } from './shaders';
+import { GLProgram, createRenderTexture, deleteRenderTexture, hexToRgb, setSampling, type RenderTexture } from './glutil';
+import { VERT, FINAL_FRAG, BRIGHT_FRAG, BLUR_FRAG } from './shaders';
 import type { Backend, SourceImage } from './pipeline';
+import { ditherSpread, paletteRgb, pixelGrid, usesErrorDiffusion, MAX_PALETTE } from './palettes';
+import { decodeLut } from './lut';
 
 export type AnyCanvas = HTMLCanvasElement | OffscreenCanvas;
 
@@ -16,6 +18,9 @@ interface SourceTex {
 const TILE = 2048;
 /** Keep a few source textures resident (preview + thumbnails). */
 const MAX_SOURCES = 4;
+/** Bloom is computed in a buffer of fixed size (long edge), independent of
+ * output resolution, so preview and export bloom are the same. */
+const BLOOM_EDGE = 384;
 
 export interface RenderOptions {
   /** Skip in-shader palette quantisation (a CPU error-diffusion pass follows). */
@@ -33,8 +38,17 @@ export class GLRenderer implements Backend {
   /** Largest output this context can render (viewport/renderbuffer limits). */
   readonly maxOutputSize: number;
   private finalProg: GLProgram;
+  private brightProg: GLProgram;
+  private blurProg: GLProgram;
   private sources = new Map<string, SourceTex>();
   private vao: WebGLVertexArrayObject;
+  private bloomA: RenderTexture | null = null;
+  private bloomB: RenderTexture | null = null;
+  private dummy2D: WebGLTexture;
+  private dummy3D: WebGLTexture;
+  private lutTex: WebGLTexture | null = null;
+  private lutKey = '';
+  private palBuf = new Float32Array(MAX_PALETTE * 3);
   lost = false;
 
   constructor(readonly canvas: AnyCanvas) {
@@ -54,6 +68,18 @@ export class GLRenderer implements Backend {
     this.maxOutputSize = Math.min(vp[0], vp[1], gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), this.maxTextureSize);
     this.vao = gl.createVertexArray()!;
     this.finalProg = new GLProgram(gl, VERT, FINAL_FRAG, 'final');
+    this.brightProg = new GLProgram(gl, VERT, BRIGHT_FRAG, 'bright');
+    this.blurProg = new GLProgram(gl, VERT, BLUR_FRAG, 'blur');
+
+    // Every sampler needs a texture of the right type on its own unit, even
+    // when the effect is off: sampler2D and sampler3D may not share a unit.
+    this.dummy2D = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.dummy2D);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+    this.dummy3D = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_3D, this.dummy3D);
+    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, 1, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+
     canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.lost = true; });
   }
 
@@ -92,7 +118,7 @@ export class GLRenderer implements Backend {
   }
 
   /** Render the recipe for a source into this renderer's canvas at outW×outH. */
-  render(key: string, recipe: Recipe, ctx: RenderContext, outW: number, outH: number, _opts: RenderOptions = {}): void {
+  render(key: string, recipe: Recipe, ctx: RenderContext, outW: number, outH: number, opts: RenderOptions = {}): void {
     const gl = this.gl;
     const src = this.sources.get(key);
     if (!src) throw new Error(`No source texture for ${key}`);
@@ -104,11 +130,21 @@ export class GLRenderer implements Backend {
     gl.disable(gl.BLEND);
 
     const a = recipe.adjust;
+    const hal = recipe.halation;
+    const bloom = hal.enabled && hal.amount > 0 ? this.renderBloom(src, recipe, outW, outH) : null;
+    const lut = recipe.lut?.enabled && recipe.lut.intensity > 0 ? this.ensureLut(recipe) : null;
+
     const p = this.finalProg.use();
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, src.tex);
-    p.i('u_src', 0)
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, bloom ? bloom.tex : this.dummy2D);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_3D, lut ?? this.dummy3D);
+    gl.activeTexture(gl.TEXTURE0);
+    p.i('u_src', 0).i('u_bloom', 1).i('u_lut', 2)
       .f('u_outSize', outW, outH)
+      .f('u_srcSize', src.width, src.height)
       .f('u_flipY', 1)
       .u('u_seed', ctx.seed)
       .f('u_exposure', a.exposure).f('u_brightness', a.brightness).f('u_contrast', a.contrast)
@@ -117,9 +153,125 @@ export class GLRenderer implements Backend {
       .f('u_temperature', a.temperature).f('u_tint', a.tint).f('u_hue', a.hue)
       .f('u_gamma', a.gamma).f('u_fade', a.fade).f('u_sharpness', a.sharpness);
 
+    // Block grid shared by pixelate and palettes (see pixelGrid()).
+    const grid = pixelGrid(recipe, outW, outH);
+    // Each of the 4x4 taps per block covers a quarter block of source pixels.
+    const blockSrcPx = grid ? src.width / grid[0] / 4 : 1;
+    p.f('u_grid', grid ? grid[0] : 0, grid ? grid[1] : 0).f('u_gridLod', Math.max(0, Math.log2(blockSrcPx)));
+
+    const on = (e: { enabled: boolean }, v: number) => (e.enabled ? v : 0);
+    p.f('u_ca', on(recipe.chromaticAberration, recipe.chromaticAberration.amount));
+    const crt = recipe.crt;
+    p.f('u_crtCurv', on(crt, crt.curvature)).f('u_scan', on(crt, crt.scanlines)).f('u_lines', crt.lineCount);
+    const vhs = recipe.vhs;
+    p.f('u_vhsNoise', on(vhs, vhs.noise)).f('u_vhsTrack', on(vhs, vhs.tracking)).f('u_vhsBleed', on(vhs, vhs.bleed));
+    // Halation tint: neutral bloom (warmth 0) to the red/orange of film
+    // halation, where light scatters off the film base back into the red layer.
+    const w = hal.warmth;
+    p.f('u_halAmt', bloom ? hal.amount : 0).f('u_halTint', 1, 1 - 0.65 * w, 1 - 0.85 * w);
+    p.f('u_lutAmt', lut ? recipe.lut!.intensity : 0).f('u_lutSize', recipe.lut?.size ?? 2);
+
+    const t = recipe.tone;
+    p.i('u_toneMode', t.enabled ? (t.mode === 'duotone' ? 1 : 2) : 0)
+      .f('u_toneShadow', ...hexToRgb(t.shadowColour)).f('u_toneHigh', ...hexToRgb(t.highlightColour))
+      .f('u_toneAmt', t.amount).f('u_toneBal', t.balance);
+    p.f('u_posterise', on(recipe.posterise, recipe.posterise.levels));
+    const leak = recipe.lightLeak;
+    const rad = (leak.angle * Math.PI) / 180;
+    p.f('u_leakAmt', on(leak, leak.amount)).f('u_leakSize', leak.size)
+      .f('u_leakCol', ...hexToRgb(leak.colour)).f('u_leakDir', Math.cos(rad), Math.sin(rad));
+    const v = recipe.vignette;
+    p.f('u_vigAmt', on(v, v.amount)).f('u_vigSize', v.size).f('u_vigRound', v.roundness).f('u_vigFeather', v.feather);
+    const g = recipe.grain;
+    p.f('u_grainAmt', on(g, g.amount)).f('u_grainSize', g.size).f('u_grainColour', g.colour);
+
+    const pal = recipe.palette;
+    if (pal.enabled && !opts.skipPalette && !usesErrorDiffusion(recipe)) {
+      const cols = paletteRgb(pal);
+      cols.forEach((c, i) => this.palBuf.set(c, i * 3));
+      p.i('u_palCount', cols.length).v3array('u_pal', this.palBuf)
+        .i('u_dither', pal.dither === 'bayer4' ? 1 : pal.dither === 'bayer8' ? 2 : 0)
+        .f('u_ditherAmt', pal.ditherStrength * ditherSpread(cols) * 1.5);
+    } else {
+      p.i('u_palCount', 0).i('u_dither', 0);
+    }
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, outW, outH);
     this.drawTiled(outW, outH);
+  }
+
+  /** Bright-pass + separable blur into a small fixed-size buffer. */
+  private renderBloom(src: SourceTex, recipe: Recipe, outW: number, outH: number): RenderTexture {
+    const gl = this.gl;
+    const long = Math.max(outW, outH);
+    const bw = Math.max(1, Math.round((BLOOM_EDGE * outW) / long));
+    const bh = Math.max(1, Math.round((BLOOM_EDGE * outH) / long));
+    if (!this.bloomA || this.bloomA.width !== bw || this.bloomA.height !== bh) {
+      deleteRenderTexture(gl, this.bloomA);
+      deleteRenderTexture(gl, this.bloomB);
+      this.bloomA = createRenderTexture(gl, bw, bh);
+      this.bloomB = createRenderTexture(gl, bw, bh);
+    }
+    const A = this.bloomA, B = this.bloomB!;
+    const a = recipe.adjust;
+    const hal = recipe.halation;
+    // Same exposure and white balance gains as the final pass, so the glow
+    // follows the image's brightness.
+    const t = a.temperature, n = a.tint;
+    const gain = [(1 + 0.3 * t) * (1 + 0.12 * n), 1 - 0.18 * n, (1 - 0.3 * t) * (1 + 0.12 * n)];
+    const lum = 0.2126 * gain[0] + 0.7152 * gain[1] + 0.0722 * gain[2];
+    const expo = Math.pow(2, a.exposure) / lum;
+    // Threshold is given on the perceptual (sRGB) scale for intuitive control.
+    const thr = hal.threshold <= 0.04045 ? hal.threshold / 12.92 : Math.pow((hal.threshold + 0.055) / 1.055, 2.4);
+
+    gl.viewport(0, 0, bw, bh);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, A.fbo);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, src.tex);
+    this.brightProg.use().i('u_src', 0).f('u_size', bw, bh)
+      .f('u_lod', Math.max(0, Math.log2(src.width / bw) - 1))
+      .f('u_gain', gain[0] * expo, gain[1] * expo, gain[2] * expo)
+      .f('u_threshold', thr);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    // Radius 0..1 -> sigma 0.5%..8% of the long edge.
+    const sigma = BLOOM_EDGE * (0.005 + 0.075 * hal.radius);
+    const blur = this.blurProg.use().i('u_tex', 0).f('u_size', bw, bh).f('u_sigma', sigma);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, B.fbo);
+    gl.bindTexture(gl.TEXTURE_2D, A.tex);
+    blur.f('u_dir', 1, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, A.fbo);
+    gl.bindTexture(gl.TEXTURE_2D, B.tex);
+    blur.f('u_dir', 0, 1);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return A;
+  }
+
+  /** Upload the recipe's 3D LUT (cached by content) as an RGB16F texture. */
+  private ensureLut(recipe: Recipe): WebGLTexture | null {
+    const lut = recipe.lut!;
+    const key = `${lut.size}:${lut.data.length}:${lut.data.slice(0, 64)}:${lut.data.slice(-64)}`;
+    if (this.lutTex && key === this.lutKey) return this.lutTex;
+    const gl = this.gl;
+    const rgb = decodeLut(lut);
+    if (!rgb) return null;
+    const half = new Uint16Array(rgb.length);
+    for (let i = 0; i < rgb.length; i++) half[i] = toHalf(rgb[i]);
+    if (!this.lutTex) this.lutTex = gl.createTexture()!;
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_3D, this.lutTex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGB16F, lut.size, lut.size, lut.size, 0, gl.RGB, gl.HALF_FLOAT, half);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R]) gl.texParameteri(gl.TEXTURE_3D, p, gl.CLAMP_TO_EDGE);
+    gl.activeTexture(gl.TEXTURE0);
+    this.lutKey = key;
+    return this.lutTex;
   }
 
   private drawTiled(w: number, h: number): void {
@@ -140,9 +292,36 @@ export class GLRenderer implements Backend {
   }
 
   dispose(): void {
+    const gl = this.gl;
     for (const k of [...this.sources.keys()]) this.dropSource(k);
+    deleteRenderTexture(gl, this.bloomA);
+    deleteRenderTexture(gl, this.bloomB);
+    gl.deleteTexture(this.dummy2D);
+    gl.deleteTexture(this.dummy3D);
+    if (this.lutTex) gl.deleteTexture(this.lutTex);
     this.finalProg.dispose();
-    this.gl.deleteVertexArray(this.vao);
-    this.gl.getExtension('WEBGL_lose_context')?.loseContext();
+    this.brightProg.dispose();
+    this.blurProg.dispose();
+    gl.deleteVertexArray(this.vao);
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
   }
+}
+
+// float32 -> IEEE half bits (round to nearest; LUT values are within 0..1).
+const f32 = new Float32Array(1);
+const u32 = new Uint32Array(f32.buffer);
+function toHalf(v: number): number {
+  f32[0] = v;
+  const x = u32[0];
+  const sign = (x >>> 16) & 0x8000;
+  const exp = ((x >>> 23) & 0xff) - 127 + 15;
+  let mant = x & 0x7fffff;
+  if (exp <= 0) {
+    if (exp < -10) return sign;
+    mant = (mant | 0x800000) >> (1 - exp);
+    return sign | ((mant + 0x1000) >> 13);
+  }
+  if (exp >= 31) return sign | 0x7c00;
+  const h = sign | (exp << 10) | (mant >> 13);
+  return mant & 0x1000 ? h + 1 : h;
 }

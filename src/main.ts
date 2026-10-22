@@ -8,7 +8,7 @@ import type { Backend } from './render/pipeline';
 import { Preview } from './ui/preview';
 import { Thumbs } from './ui/thumbs';
 import { Panel } from './ui/panel';
-import { LIGHT, COLOUR } from './ui/panelSpec';
+import { LIGHT, COLOUR, RETRO } from './ui/panelSpec';
 import { notify } from './ui/notify';
 
 const store = new Store();
@@ -75,6 +75,7 @@ const thumbs = new Thumbs(thumbList, store, backend);
 const panel = new Panel(panelEl, store);
 panel.addSection(LIGHT);
 panel.addSection(COLOUR);
+panel.addSection(RETRO);
 
 preview.onRendered = ({ width, height, ms }) => {
   const img = store.selected;

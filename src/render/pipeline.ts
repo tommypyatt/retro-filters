@@ -1,5 +1,11 @@
 import type { Recipe, RenderContext } from '../recipe';
 import type { AnyCanvas, RenderOptions } from './glRenderer';
+import { computeLayout, drawDateStamp, drawFrameBackground, drawFrameForeground, type Layout } from './overlays';
+import { errorDiffuse, type DiffusionKind } from './dither';
+import { paletteRgb, pixelGrid, usesErrorDiffusion } from './palettes';
+
+export type { Layout } from './overlays';
+export { computeLayout } from './overlays';
 
 export type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 export type SourceImage = ImageBitmap | HTMLCanvasElement | OffscreenCanvas;
@@ -21,21 +27,12 @@ export interface Backend {
   dispose(): void;
 }
 
-export interface Layout {
-  /** Final canvas size including any frame. */
-  width: number;
-  height: number;
-  /** Where the image sits inside the canvas. */
-  image: { x: number; y: number; w: number; h: number };
-}
-
-export function computeLayout(_recipe: Recipe, w: number, h: number): Layout {
-  return { width: w, height: h, image: { x: 0, y: 0, w, h } };
-}
-
 /**
- * Render (image, recipe) to a 2D context: backend pass, then CPU passes and
- * overlays. Used identically for preview, thumbnails and export.
+ * Render (image, recipe) to a 2D context. Used identically for preview,
+ * thumbnails and export:
+ *   1. backend pass (adjustments + shader effects) at imageW×imageH
+ *   2. optional CPU error-diffusion palette pass
+ *   3. frame, letterbox bars and date stamp
  * The source must already be set on the backend under `key`.
  */
 export function renderRecipe(
@@ -55,7 +52,25 @@ export function renderRecipe(
   } else {
     out.clearRect(0, 0, c.width, c.height);
   }
-  backend.render(key, recipe, ctx, imageW, imageH);
-  out.drawImage(backend.canvas, layout.image.x, layout.image.y);
+  const diffuse = usesErrorDiffusion(recipe);
+  backend.render(key, recipe, ctx, imageW, imageH, { skipPalette: diffuse });
+  drawFrameBackground(out, recipe, layout);
+  const r = layout.image;
+  if (diffuse) {
+    // Read back through a scratch canvas so `out` can stay GPU-accelerated.
+    const scratch = new OffscreenCanvas(r.w, r.h);
+    const sctx = scratch.getContext('2d', { willReadFrequently: true })!;
+    sctx.drawImage(backend.canvas, 0, 0);
+    const data = sctx.getImageData(0, 0, r.w, r.h);
+    scratch.width = scratch.height = 0;
+    const grid = pixelGrid(recipe, imageW, imageH)!;
+    errorDiffuse(data, grid, paletteRgb(recipe.palette), recipe.palette.dither as DiffusionKind, recipe.palette.ditherStrength);
+    out.putImageData(data, r.x, r.y);
+  } else {
+    out.drawImage(backend.canvas, r.x, r.y);
+  }
+
+  drawFrameForeground(out, recipe, layout);
+  drawDateStamp(out, recipe.dateStamp, layout.visible, ctx.date);
   return layout;
 }
