@@ -155,7 +155,7 @@ export function exportSection(store: Store, exporter: Exporter): { el: HTMLEleme
         text.textContent = 'Finishing archive…';
         zipper.end();
         await zipDone;
-        if (done) downloadBlob(new Blob(parts as BlobPart[], { type: 'application/zip' }), 'retro-filters-export.zip');
+        if (done) downloadBlob(new Blob(parts as BlobPart[], { type: 'application/zip' }), 'retro-filter-export.zip');
       }
       const secs = ((performance.now() - t0) / 1000).toFixed(1);
       console.info(`Exported ${done}/${images.length} in ${secs}s (${exporter.mode} thread)`);

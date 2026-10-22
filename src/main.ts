@@ -43,7 +43,7 @@ const panelEl = h('aside', { class: 'panel', id: 'panel', 'aria-label': 'Adjustm
 
 app.append(
   h('header', { class: 'topbar' },
-    h('div', { class: 'brand' }, 'RETRO', h('span', {}, 'FILTERS')),
+    h('div', { class: 'brand' }, 'RETRO', h('span', {}, 'FILTER')),
     addBtn, fileInput, clearBtn,
     h('div', { class: 'spacer' }),
     panelToggle,

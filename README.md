@@ -1,4 +1,4 @@
-# Retro Filters
+# Retro Filter
 
 Apply retro film, video and 8-bit looks to batches of photos, entirely in the browser. Images never leave your machine: there is no server, and the app makes no network requests after it has loaded, so it also works offline.
 

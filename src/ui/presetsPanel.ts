@@ -60,7 +60,7 @@ export function presetsSection(store: Store): HTMLElement {
     else custom.pop();
   } }, 'Save current…');
   const importBtn = h('button', { class: 'btn small', onclick: () => fileInput.click() }, 'Import…');
-  const exportAll = h('button', { class: 'btn small', onclick: () => exportPresets(custom, 'retro-filters-presets.json') }, 'Export all');
+  const exportAll = h('button', { class: 'btn small', onclick: () => exportPresets(custom, 'retro-filter-presets.json') }, 'Export all');
   const status = h('p', { class: 'hint', 'aria-live': 'polite' });
 
   fileInput.addEventListener('change', async () => {
