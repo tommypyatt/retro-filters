@@ -24,6 +24,7 @@ export class CpuRenderer implements Backend {
   readonly kind = 'canvas2d' as const;
   readonly maxTextureSize = 16384;
   readonly maxOutputSize = 16384;
+  readonly maxTile = Infinity;
   private sources = new Map<string, SourceImage>();
   private ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 

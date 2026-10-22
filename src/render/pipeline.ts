@@ -20,6 +20,8 @@ export interface Backend {
   readonly canvas: AnyCanvas;
   readonly maxTextureSize: number;
   readonly maxOutputSize: number;
+  /** Largest tile the backend renders in one go (Infinity = whole image). */
+  readonly maxTile: number;
   hasSource(key: string): boolean;
   setSource(key: string, image: SourceImage): void;
   dropSource(key: string): void;
@@ -30,7 +32,8 @@ export interface Backend {
 /**
  * Render (image, recipe) to a 2D context. Used identically for preview,
  * thumbnails and export:
- *   1. backend pass (adjustments + shader effects) at imageW×imageH
+ *   1. backend pass (adjustments + shader effects) at imageW×imageH, in
+ *      tiles of at most backend.maxTile px
  *   2. optional CPU error-diffusion palette pass
  *   3. frame, letterbox bars and date stamp
  * The source must already be set on the backend under `key`.
@@ -53,21 +56,28 @@ export function renderRecipe(
     out.clearRect(0, 0, c.width, c.height);
   }
   const diffuse = usesErrorDiffusion(recipe);
-  backend.render(key, recipe, ctx, imageW, imageH, { skipPalette: diffuse });
   drawFrameBackground(out, recipe, layout);
   const r = layout.image;
-  if (diffuse) {
-    // Read back through a scratch canvas so `out` can stay GPU-accelerated.
-    const scratch = new OffscreenCanvas(r.w, r.h);
-    const sctx = scratch.getContext('2d', { willReadFrequently: true })!;
-    sctx.drawImage(backend.canvas, 0, 0);
+  // Error diffusion needs the whole image on the CPU: assemble into a
+  // read-optimised scratch canvas so `out` can stay GPU-accelerated.
+  const scratch = diffuse ? new OffscreenCanvas(r.w, r.h) : null;
+  const sctx = scratch?.getContext('2d', { willReadFrequently: true }) ?? null;
+  const dest = sctx ?? out;
+  const ox = sctx ? 0 : r.x, oy = sctx ? 0 : r.y;
+  const T = Math.min(backend.maxTile, Math.max(imageW, imageH));
+  for (let ty = 0; ty < imageH; ty += T) {
+    for (let tx = 0; tx < imageW; tx += T) {
+      const tile = { x: tx, y: ty, w: Math.min(T, imageW - tx), h: Math.min(T, imageH - ty) };
+      backend.render(key, recipe, ctx, imageW, imageH, { skipPalette: diffuse, tile });
+      dest.drawImage(backend.canvas, ox + tx, oy + ty);
+    }
+  }
+  if (sctx && scratch) {
     const data = sctx.getImageData(0, 0, r.w, r.h);
     scratch.width = scratch.height = 0;
     const grid = pixelGrid(recipe, imageW, imageH)!;
     errorDiffuse(data, grid, paletteRgb(recipe.palette), recipe.palette.dither as DiffusionKind, recipe.palette.ditherStrength);
     out.putImageData(data, r.x, r.y);
-  } else {
-    out.drawImage(backend.canvas, r.x, r.y);
   }
 
   drawFrameForeground(out, recipe, layout);

@@ -13,8 +13,11 @@ interface SourceTex {
   height: number;
 }
 
-/** Tile edge for the final pass. Splitting huge outputs into scissored tiles
- * keeps each GPU submission short, avoiding driver watchdog resets. */
+/** Largest tile rendered per draw. Large outputs are rendered tile by tile
+ * into a tile-sized canvas and assembled in 2D, which keeps each GPU
+ * submission short (no driver watchdog resets), keeps GPU memory for the
+ * framebuffer small, and avoids browsers silently clamping huge drawing
+ * buffers. */
 const TILE = 2048;
 /** Keep a few source textures resident (preview + thumbnails). */
 const MAX_SOURCES = 4;
@@ -25,6 +28,8 @@ const BLOOM_EDGE = 384;
 export interface RenderOptions {
   /** Skip in-shader palette quantisation (a CPU error-diffusion pass follows). */
   skipPalette?: boolean;
+  /** Render only this part of the output (default: all of it). */
+  tile?: { x: number; y: number; w: number; h: number };
 }
 
 /**
@@ -37,6 +42,7 @@ export class GLRenderer implements Backend {
   readonly maxTextureSize: number;
   /** Largest output this context can render (viewport/renderbuffer limits). */
   readonly maxOutputSize: number;
+  readonly maxTile = TILE;
   private finalProg: GLProgram;
   private brightProg: GLProgram;
   private blurProg: GLProgram;
@@ -44,6 +50,8 @@ export class GLRenderer implements Backend {
   private vao: WebGLVertexArrayObject;
   private bloomA: RenderTexture | null = null;
   private bloomB: RenderTexture | null = null;
+  /** Inputs of the last bloom pass, so tiles of one image reuse it. */
+  private bloomKey = '';
   private dummy2D: WebGLTexture;
   private dummy3D: WebGLTexture;
   private lutTex: WebGLTexture | null = null;
@@ -64,8 +72,9 @@ export class GLRenderer implements Backend {
     if (!gl) throw new Error('WebGL2 is not available');
     this.gl = gl;
     this.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
-    const vp = gl.getParameter(gl.MAX_VIEWPORT_DIMS) as Int32Array;
-    this.maxOutputSize = Math.min(vp[0], vp[1], gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), this.maxTextureSize);
+    // Output is assembled from tiles in a 2D canvas, so it is limited by the
+    // source texture rather than by viewport or drawing-buffer limits.
+    this.maxOutputSize = this.maxTextureSize;
     this.vao = gl.createVertexArray()!;
     this.finalProg = new GLProgram(gl, VERT, FINAL_FRAG, 'final');
     this.brightProg = new GLProgram(gl, VERT, BRIGHT_FRAG, 'bright');
@@ -109,6 +118,14 @@ export class GLRenderer implements Backend {
     this.sources.set(key, { tex, width: image.width, height: image.height });
   }
 
+  private texIds = new WeakMap<WebGLTexture, number>();
+  private nextTexId = 1;
+  private texId(t: WebGLTexture): number {
+    let id = this.texIds.get(t);
+    if (!id) this.texIds.set(t, (id = this.nextTexId++));
+    return id;
+  }
+
   dropSource(key: string): void {
     const s = this.sources.get(key);
     if (s) {
@@ -117,14 +134,19 @@ export class GLRenderer implements Backend {
     }
   }
 
-  /** Render the recipe for a source into this renderer's canvas at outW×outH. */
+  /**
+   * Render the recipe for a source at outW×outH into this renderer's canvas.
+   * With opts.tile, only that region is rendered and the canvas is tile-sized.
+   */
   render(key: string, recipe: Recipe, ctx: RenderContext, outW: number, outH: number, opts: RenderOptions = {}): void {
     const gl = this.gl;
     const src = this.sources.get(key);
     if (!src) throw new Error(`No source texture for ${key}`);
-    if (this.canvas.width !== outW || this.canvas.height !== outH) {
-      this.canvas.width = outW;
-      this.canvas.height = outH;
+    const tile = opts.tile ?? { x: 0, y: 0, w: outW, h: outH };
+    if (tile.w > TILE || tile.h > TILE) throw new Error(`Tile ${tile.w}×${tile.h} exceeds ${TILE}px`);
+    if (this.canvas.width !== tile.w || this.canvas.height !== tile.h) {
+      this.canvas.width = tile.w;
+      this.canvas.height = tile.h;
     }
     gl.bindVertexArray(this.vao);
     gl.disable(gl.BLEND);
@@ -144,6 +166,7 @@ export class GLRenderer implements Backend {
     gl.activeTexture(gl.TEXTURE0);
     p.i('u_src', 0).i('u_bloom', 1).i('u_lut', 2)
       .f('u_outSize', outW, outH)
+      .f('u_tile', tile.x, tile.y, tile.w, tile.h)
       .f('u_srcSize', src.width, src.height)
       .f('u_flipY', 1)
       .u('u_seed', ctx.seed)
@@ -197,8 +220,9 @@ export class GLRenderer implements Backend {
     }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, outW, outH);
-    this.drawTiled(outW, outH);
+    gl.viewport(0, 0, tile.w, tile.h);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.flush();
   }
 
   /** Bright-pass + separable blur into a small fixed-size buffer. */
@@ -212,10 +236,14 @@ export class GLRenderer implements Backend {
       deleteRenderTexture(gl, this.bloomB);
       this.bloomA = createRenderTexture(gl, bw, bh);
       this.bloomB = createRenderTexture(gl, bw, bh);
+      this.bloomKey = '';
     }
     const A = this.bloomA, B = this.bloomB!;
     const a = recipe.adjust;
     const hal = recipe.halation;
+    const key = JSON.stringify([this.texId(src.tex), bw, bh, hal, a.exposure, a.temperature, a.tint]);
+    if (key === this.bloomKey) return A;
+    this.bloomKey = key;
     // Same exposure and white balance gains as the final pass, so the glow
     // follows the image's brightness.
     const t = a.temperature, n = a.tint;
@@ -272,23 +300,6 @@ export class GLRenderer implements Backend {
     gl.activeTexture(gl.TEXTURE0);
     this.lutKey = key;
     return this.lutTex;
-  }
-
-  private drawTiled(w: number, h: number): void {
-    const gl = this.gl;
-    if (w <= TILE && h <= TILE) {
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-      return;
-    }
-    gl.enable(gl.SCISSOR_TEST);
-    for (let y = 0; y < h; y += TILE) {
-      for (let x = 0; x < w; x += TILE) {
-        gl.scissor(x, y, Math.min(TILE, w - x), Math.min(TILE, h - y));
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
-        gl.flush();
-      }
-    }
-    gl.disable(gl.SCISSOR_TEST);
   }
 
   dispose(): void {

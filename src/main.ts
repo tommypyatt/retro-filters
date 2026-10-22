@@ -11,6 +11,9 @@ import { Panel } from './ui/panel';
 import { LIGHT, COLOUR, RETRO } from './ui/panelSpec';
 import { notify } from './ui/notify';
 import { presetsSection } from './ui/presetsPanel';
+import { batchBar } from './ui/batchBar';
+import { exportSection } from './ui/exportPanel';
+import { Exporter } from './export/exporter';
 
 const store = new Store();
 
@@ -22,6 +25,9 @@ const addBtn = h('button', { class: 'btn', id: 'add-btn' }, 'Add images…');
 const clearBtn = h('button', { class: 'btn danger', id: 'clear-btn', disabled: true }, 'Clear all');
 const panelToggle = h('button', { class: 'btn', id: 'panel-toggle', 'aria-controls': 'panel', 'aria-expanded': 'true' }, 'Controls');
 const thumbList = h('ul', { class: 'thumb-list', id: 'thumb-list' });
+const pickAll = h('button', { class: 'btn small', title: 'Tick all images for “Apply to selected”' }, 'Tick all');
+const pickNone = h('button', { class: 'btn small', title: 'Untick all images' }, 'Untick');
+const thumbActions = h('div', { class: 'thumbs-actions', hidden: true }, pickAll, pickNone);
 const viewport = h('div', { class: 'viewport', id: 'viewport' });
 const dropzone = h('div', { class: 'dropzone', id: 'dropzone' },
   h('div', {},
@@ -43,7 +49,7 @@ app.append(
     panelToggle,
   ),
   h('div', { class: 'banner', id: 'banner' }),
-  h('nav', { class: 'thumbs', 'aria-label': 'Loaded images' }, thumbList),
+  h('nav', { class: 'thumbs', 'aria-label': 'Loaded images' }, thumbActions, thumbList),
   h('main', { class: 'stage' },
     h('div', { class: 'stage-toolbar' }, compareBtn, splitBtn, info),
     viewport,
@@ -74,10 +80,15 @@ document.documentElement.dataset.backend = backend.kind;
 const preview = new Preview(viewport, store, backend);
 const thumbs = new Thumbs(thumbList, store, backend);
 const panel = new Panel(panelEl, store);
+const batch = batchBar(store);
+panel.head.append(batch.el);
 panel.body.append(presetsSection(store));
 panel.addSection(LIGHT);
 panel.addSection(COLOUR);
 panel.addSection(RETRO);
+const exporter = new Exporter(backend);
+const output = exportSection(store, exporter);
+panel.body.append(output.el);
 
 preview.onRendered = ({ width, height, ms }) => {
   const img = store.selected;
@@ -91,14 +102,20 @@ store.on((kind) => {
     thumbs.rebuild();
     clearBtn.disabled = store.images.length === 0;
     dropzone.hidden = store.images.length > 0;
+    thumbActions.hidden = store.images.length < 2;
   } else {
     thumbs.update();
   }
   if (kind === 'selection') thumbs.scrollToSelected();
   panel.sync();
+  batch.sync();
+  output.sync();
   preview.request();
 });
 panel.sync();
+batch.sync();
+pickAll.addEventListener('click', () => { for (const i of store.images) store.picked.add(i.id); store.emit('selection'); });
+pickNone.addEventListener('click', () => { store.picked.clear(); store.emit('selection'); });
 
 // ---------- Loading ----------
 fileInput.addEventListener('change', () => {
@@ -199,4 +216,4 @@ window.addEventListener('keyup', (e) => { if (e.key === 'c' || e.key === 'C') ho
 window.addEventListener('blur', () => hold(false));
 
 // Exposed for automated browser tests.
-Object.assign(window, { __retro: { store, backend, preview } });
+Object.assign(window, { __retro: { store, backend, preview, exporter } });

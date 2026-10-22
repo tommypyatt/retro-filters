@@ -119,7 +119,8 @@ export const FINAL_FRAG = COMMON + /* glsl */ `
 uniform sampler2D u_src;
 uniform sampler2D u_bloom;
 uniform sampler3D u_lut;
-uniform vec2 u_outSize;     // output size in px
+uniform vec2 u_outSize;     // full output size in px
+uniform vec4 u_tile;        // this draw's tile within the output: x, y (from top), w, h
 uniform vec2 u_srcSize;     // source texture size in px
 uniform float u_flipY;      // 1 when drawing to the default framebuffer
 uniform uint u_seed;
@@ -468,7 +469,9 @@ vec3 palette(vec3 s, ivec2 cell) {
 }
 
 void main() {
-  vec2 frag = vec2(gl_FragCoord.x, mix(gl_FragCoord.y, u_outSize.y - gl_FragCoord.y, u_flipY));
+  // Global, top-down pixel coordinate: every pixel depends only on its
+  // position in the full image, so tiles join seamlessly.
+  vec2 frag = u_tile.xy + vec2(gl_FragCoord.x, mix(gl_FragCoord.y, u_tile.w - gl_FragCoord.y, u_flipY));
   vec2 uv = frag / u_outSize;
 
   float mask;

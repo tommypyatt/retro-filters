@@ -36,7 +36,15 @@ export class Thumbs {
     canvas.getContext('2d')!.drawImage(img.thumb, 0, 0);
     const btn = h('button', { class: 'thumb-btn', 'aria-label': `Select ${img.name}`, title: img.name },
       canvas, h('span', { class: 'name' }, img.name));
-    btn.addEventListener('click', () => this.store.select(img.id));
+    btn.addEventListener('click', (e) => {
+      // Ctrl/Cmd-click ticks the image for "apply to selected" instead.
+      if (e.ctrlKey || e.metaKey) {
+        if (!this.store.picked.delete(img.id)) this.store.picked.add(img.id);
+        this.store.emit('selection');
+      } else {
+        this.store.select(img.id);
+      }
+    });
     const badge = h('span', { class: 'badge', title: 'This image has its own settings' }, 'EDITED');
     const pick = h('input', { type: 'checkbox', class: 'pick', 'aria-label': `Include ${img.name} in “apply to selected”`, title: 'Select for “Apply to selected”' });
     pick.addEventListener('change', () => {

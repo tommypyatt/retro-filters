@@ -95,7 +95,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
   padding: 8px;
   display: flex; flex-direction: column; gap: 8px;
 }
-.thumbs-actions { display: flex; flex-direction: column; gap: 6px; }
+.thumbs-actions { display: flex; gap: 4px; }
+.thumbs-actions .btn { flex: 1; padding: 3px 4px; }
+.batch { display: flex; flex-direction: column; gap: 6px; }
 .thumb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .thumb {
   position: relative;
@@ -277,7 +279,7 @@ progress { width: 100%; height: 10px; accent-color: var(--accent); }
     flex-direction: row; overflow-x: auto; overflow-y: hidden;
     border-right: 0; border-top: 1px solid var(--line); height: 112px;
   }
-  .thumbs-actions { flex-direction: column; justify-content: center; }
+  .thumbs-actions { flex-direction: column; justify-content: center; flex: none; }
   .thumb-list { flex-direction: row; }
   .thumb { width: 92px; height: 92px; }
   .panel {
