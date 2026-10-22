@@ -10,6 +10,7 @@ import { Thumbs } from './ui/thumbs';
 import { Panel } from './ui/panel';
 import { LIGHT, COLOUR, RETRO } from './ui/panelSpec';
 import { notify } from './ui/notify';
+import { presetsSection } from './ui/presetsPanel';
 
 const store = new Store();
 
@@ -73,6 +74,7 @@ document.documentElement.dataset.backend = backend.kind;
 const preview = new Preview(viewport, store, backend);
 const thumbs = new Thumbs(thumbList, store, backend);
 const panel = new Panel(panelEl, store);
+panel.body.append(presetsSection(store));
 panel.addSection(LIGHT);
 panel.addSection(COLOUR);
 panel.addSection(RETRO);
@@ -93,7 +95,7 @@ store.on((kind) => {
     thumbs.update();
   }
   if (kind === 'selection') thumbs.scrollToSelected();
-  if (kind !== 'recipe') panel.sync();
+  panel.sync();
   preview.request();
 });
 panel.sync();

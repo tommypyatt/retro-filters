@@ -15,7 +15,6 @@ export class Panel {
       set: (path, value) => {
         setPath(store.editing(), path, value);
         store.emit('recipe');
-        this.sync();
       },
     };
     el.append(this.head, this.body);

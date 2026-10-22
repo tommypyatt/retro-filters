@@ -1,5 +1,6 @@
 import type { SectionSpec } from './controls';
 import { paletteEditor, PALETTE_OPTIONS } from './paletteEditor';
+import { lutControl } from './lutControl';
 
 export const LIGHT: SectionSpec = {
   title: 'Light',
@@ -25,6 +26,7 @@ export const COLOUR: SectionSpec = {
     { kind: 'slider', path: 'adjust.hue', label: 'Hue', min: -180, max: 180, step: 1, suffix: '°' },
     { kind: 'slider', path: 'adjust.saturation', label: 'Saturation', min: -1, max: 1, step: 0.01 },
     { kind: 'slider', path: 'adjust.vibrance', label: 'Vibrance', min: -1, max: 1, step: 0.01 },
+    { kind: 'custom', build: lutControl },
   ],
 };
 
