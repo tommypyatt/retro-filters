@@ -62,7 +62,7 @@ export type StampPosition = 'bottom-right' | 'bottom-left' | 'top-right' | 'top-
 export type StampFont = 'segment' | 'mono' | 'sans' | 'serif';
 export interface DateStampEffect {
   enabled: boolean;
-  /** Text with tokens {yy} {yyyy} {mm} {dd} {hh} {min}, taken from the file's date. */
+  /** Text with tokens {yy} {yyyy} {mm} {dd} {hh} {min}, taken from the photo's EXIF capture date, else the file's modified date. */
   text: string;
   font: StampFont;
   colour: HexColor;
@@ -134,7 +134,7 @@ export function defaultRecipe(): Recipe {
     posterise: { enabled: false, levels: 6 },
     palette: { enabled: false, palette: 'gameboy', custom: ['#1b1b1b', '#e05a3a', '#f2d6a2', '#4f8fba'], dither: 'bayer4', ditherStrength: 0.6 },
     tone: { enabled: false, mode: 'split', shadowColour: '#1f5f7a', highlightColour: '#f2b36b', amount: 0.4, balance: 0 },
-    dateStamp: { enabled: false, text: "'{yy} {mm} {dd}", font: 'segment', colour: '#ff8a1e', position: 'bottom-right', size: 0.045, glow: 0.5 },
+    dateStamp: { enabled: false, text: "{dd} {mm} '{yy}", font: 'segment', colour: '#ff8a1e', position: 'bottom-right', size: 0.045, glow: 0.5 },
     frame: { enabled: false, style: 'polaroid', colour: '#f4f1ea' },
     lut: null,
   };

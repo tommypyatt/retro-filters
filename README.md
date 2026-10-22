@@ -110,7 +110,7 @@ Spatial values are **relative to the image** (fractions of the long or short edg
 | `posterise` | `levels` 2…32 (6; per channel) |
 | `palette` | `palette` `gameboy`, `cga`, `ega`, `nes` or `custom`; `custom` array of 2–32 hex colours; `dither` `none`, `bayer4`, `bayer8`, `floyd-steinberg` or `atkinson`; `ditherStrength` 0…1 (0.6) |
 | `tone` | `mode` `split` or `duotone`; `shadowColour`, `highlightColour` hex; `amount` 0…1 (0.4); `balance` −1…1 (0) |
-| `dateStamp` | `text` (≤64 chars; tokens `{yy}` `{yyyy}` `{mm}` `{dd}` `{hh}` `{min}`, default `'{yy} {mm} {dd}`); `font` `segment`, `mono`, `sans` or `serif`; `colour` hex (`#ff8a1e`); `position` `bottom-right`, `bottom-left`, `top-right` or `top-left`; `size` 0.02…0.12 (character height as a fraction of the short edge); `glow` 0…1 |
+| `dateStamp` | `text` (≤64 chars; tokens `{yy}` `{yyyy}` `{mm}` `{dd}` `{hh}` `{min}`, default `{dd} {mm} '{yy}`); `font` `segment`, `mono`, `sans` or `serif`; `colour` hex (`#ff8a1e`); `position` `bottom-right`, `bottom-left`, `top-right` or `top-left`; `size` 0.02…0.12 (character height as a fraction of the short edge); `glow` 0…1 |
 | `frame` | `style` `polaroid`, `instax` or `letterbox` (2.39:1 black bars); `colour` hex (border colour for Polaroid/Instax) |
 | `lut` | `null`, or `{ enabled, name, size, data, intensity }`. `size` is N for an N×N×N cube (2…65). `data` is base64 of little-endian `Uint16` RGB triples (value × 65535), red fastest, in `.cube` order. `intensity` is 0…1 |
 
@@ -127,7 +127,7 @@ The example below is shortened, and keys left out take their defaults when impor
   "grain": { "enabled": true, "amount": 0.3, "size": 1.4, "colour": 0.1 },
   "pixelate": { "enabled": true, "blocks": 160 },
   "palette": { "enabled": true, "palette": "gameboy", "custom": [], "dither": "bayer4", "ditherStrength": 0.6 },
-  "dateStamp": { "enabled": true, "text": "'{yy} {mm} {dd}", "font": "segment", "colour": "#ff8a1e", "position": "bottom-right", "size": 0.045, "glow": 0.5 },
+  "dateStamp": { "enabled": true, "text": "{dd} {mm} '{yy}", "font": "segment", "colour": "#ff8a1e", "position": "bottom-right", "size": 0.045, "glow": 0.5 },
   "lut": null
 }
 ```

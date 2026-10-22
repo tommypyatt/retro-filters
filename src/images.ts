@@ -3,6 +3,8 @@
 // original File at export time so full-resolution pixels never sit in memory
 // for longer than one export.
 
+import { readExifDate } from './exif';
+
 export const PREVIEW_MAX_EDGE = 2048;
 export const THUMB_MAX_EDGE = 256;
 
@@ -17,7 +19,7 @@ export interface LoadedImage {
   thumb: ImageBitmap;
   /** Deterministic per-image seed for grain/noise so preview == export. */
   seed: number;
-  /** Used for the date stamp `{yy}` etc. tokens. */
+  /** Used for the date stamp `{yy}` etc. tokens: EXIF capture date, else the file's modified date. */
   date: Date;
 }
 
@@ -81,6 +83,7 @@ export async function decodeFile(
 
 export async function loadImage(file: File): Promise<LoadedImage> {
   let full: ImageBitmap;
+  const exifDate = readExifDate(file);
   try {
     full = await decodeFile(file);
   } catch {
@@ -103,7 +106,7 @@ export async function loadImage(file: File): Promise<LoadedImage> {
       preview,
       thumb,
       seed: hashString(`${file.name}:${file.size}`),
-      date: new Date(file.lastModified || Date.now()),
+      date: (await exifDate) ?? new Date(file.lastModified || Date.now()),
     };
   } finally {
     full.close();
