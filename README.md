@@ -2,6 +2,8 @@
 
 Apply retro film, video and 8-bit looks to batches of photos, entirely in the browser. Images never leave your machine: there is no server, and the app makes no network requests after it has loaded, so it also works offline.
 
+**Live at [retrofilter.pyatt.me](https://retrofilter.pyatt.me/)**, deployed automatically from `main` via GitHub Pages.
+
 - **GPU rendering** with WebGL2. The preview re-renders as you drag a slider, and export runs the same shader code at full resolution.
 - **Adjustments:** exposure, brightness, contrast, saturation, vibrance, highlights, shadows, temperature, tint, hue, gamma, fade and sharpness.
 - **Retro effects:** film grain, vignette, halation/bloom, chromatic aberration, CRT scanlines and curvature, VHS noise/tracking/colour bleed, light leaks, pixelate, posterise, limited palettes (Game Boy, CGA, EGA, NES, custom) with Bayer, Floyd–Steinberg or Atkinson dithering, duotone/split toning, a 7-segment date stamp, and Polaroid/Instax/letterbox frames.
@@ -24,26 +26,6 @@ npm run dev        # dev server at http://localhost:5173
 npm run build      # type-checks, then writes the static site to dist/
 npm run preview    # serves dist/ locally for testing the production build
 ```
-
-The build uses relative asset paths (`base: './'` in `vite.config.ts`), so `dist/` works from any URL path. To test it the way GitHub Pages serves a project site:
-
-```sh
-npx vite preview --base /test-repo/
-# then open http://localhost:4173/test-repo/
-```
-
-## Deploying to GitHub Pages
-
-`.github/workflows/deploy.yml` builds the site and deploys `dist/` on every push to `main`, using the official `actions/configure-pages`, `actions/upload-pages-artifact` and `actions/deploy-pages` actions.
-
-One-time setup:
-
-1. Push the repository to GitHub.
-2. In the repository, open **Settings → Pages**.
-3. Under **Build and deployment → Source**, choose **GitHub Actions**.
-4. Push to `main`, or run the workflow by hand from the **Actions** tab.
-
-The site is published at `https://<user>.github.io/<repo>/`. No configuration is needed for the repository name, because asset paths are relative.
 
 ## Using the app
 
