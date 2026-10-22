@@ -1,0 +1,25 @@
+{
+  "name": "retro-filters",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Browser-only batch retro photo filters (WebGL2, static site)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tommypyatt/retro-filters.git"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3"
+  }
+}
